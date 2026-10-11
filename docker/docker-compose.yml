@@ -1,0 +1,113 @@
+services:
+
+  postgres:
+    image: postgres:16
+    container_name: retailiq-postgres
+
+    env_file:
+      - ../.env
+
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+
+    ports:
+      - "5433:5432"
+
+    volumes:
+      - retailiq_postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  etl:
+    build:
+      context: .
+      dockerfile: etl/Dockerfile
+
+    container_name: retailiq-etl
+
+    env_file:
+      - ../.env
+
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+
+    volumes:
+      - ./data/raw:/app/data/raw:ro
+
+    profiles:
+      - manual
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  airflow:
+    image: apache/airflow:2.10.5
+    container_name: retailiq-airflow
+
+    ports:
+      - "8081:8080"
+
+    env_file:
+      - ../.env
+
+    environment:
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/airflow.db
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+
+    volumes:
+      - airflow_data:/opt/airflow
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    command: >
+      bash -c " airflow db migrate && (airflow users create --username admin --password admin --firstname Retail --lastname IQ --role Admin --email admin@retailiq.local || true) && airflow webserver "
+
+    networks:
+      - default
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  airflow-scheduler:
+    image: apache/airflow:2.10.5
+    container_name: retailiq-airflow-scheduler
+
+    env_file:
+      - ../.env
+
+    environment:
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/airflow.db
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+
+    volumes:
+      - airflow_data:/opt/airflow
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    command: airflow scheduler
+
+    networks:
+      - default
+
+    depends_on:
+      airflow:
+        condition: service_started
+
+volumes:
+  retailiq_postgres_data:
+  airflow_data:
