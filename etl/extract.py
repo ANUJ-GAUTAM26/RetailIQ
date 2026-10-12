@@ -1,7 +1,14 @@
 from pathlib import Path
 import pandas as pd
+import os
 
-RAW_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
+
+RAW_DIR = Path(
+    os.getenv(
+        "RAW_DATA_DIR",
+        str(Path(__file__).resolve().parent.parent / "data" / "raw"),
+    )
+)
 
 
 def extract_csv(filename):

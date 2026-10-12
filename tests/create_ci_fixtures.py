@@ -1,9 +1,17 @@
 
 from pathlib import Path
+import argparse
 import pandas as pd
 
-RAW_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--output-dir",
+    type=Path,
+    default=Path(__file__).resolve().parent / "fixtures" / "raw",
+)
+RAW_DIR = parser.parse_args().output_dir
 RAW_DIR.mkdir(parents=True, exist_ok=True)
+
 
 datasets = {
     "olist_customers_dataset.csv": [
@@ -163,4 +171,4 @@ for filename, rows in datasets.items():
     pd.DataFrame(rows).to_csv(RAW_DIR / filename, index=False)
     print(f"Created {filename}: {len(rows)} rows")
 
-print("CI fixture dataset created.")
+print(f"CI fixture dataset created at: {RAW_DIR}")

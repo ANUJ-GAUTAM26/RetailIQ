@@ -32,6 +32,7 @@ jobs:
       DB_HOST: localhost
       DB_PORT: 5432
       DB_NAME: retailiq
+      RAW_DATA_DIR: ${{ github.workspace }}/tests/fixtures/raw
 
     steps:
       - name: Checkout repository
@@ -54,7 +55,8 @@ jobs:
         run: python -m unittest discover -s tests -p "test_*.py" -v
 
       - name: Generate synthetic CI dataset
-        run: python tests/create_ci_fixtures.py
+        run: |
+          python tests/create_ci_fixtures.py --output-dir tests/fixtures/raw
 
       - name: Run complete ETL pipeline
         run: python etl/pipeline.py
@@ -86,6 +88,7 @@ jobs:
                   actual = conn.execute(
                       text(f"SELECT COUNT(*) FROM {table}")
                   ).scalar_one()
+
                   print(f"{table}: {actual}")
                   assert actual == count, (
                       f"{table}: expected {count}, got {actual}"
@@ -94,11 +97,12 @@ jobs:
               revenue = conn.execute(
                   text("SELECT SUM(total_item_price) FROM fact_sales")
               ).scalar_one()
+
               assert float(revenue) == 300.0, (
                   f"Unexpected item revenue: {revenue}"
               )
 
-              item_count = conn.execute(
+              missing_keys = conn.execute(
                   text("""
                       SELECT COUNT(*)
                       FROM fact_order_items
@@ -108,7 +112,8 @@ jobs:
                          OR purchase_date_sk IS NULL
                   """)
               ).scalar_one()
-              assert item_count == 0, "Missing surrogate keys detected"
+
+              assert missing_keys == 0, "Missing surrogate keys detected"
 
           engine.dispose()
           print("ETL INTEGRATION TESTS PASSED")
