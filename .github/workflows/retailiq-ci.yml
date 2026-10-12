@@ -1,3 +1,4 @@
+
 name: RetailIQ CI
 
 on:
@@ -9,6 +10,28 @@ on:
 jobs:
   test-and-build:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: retailiq
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d retailiq"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_NAME: retailiq
 
     steps:
       - name: Checkout repository
@@ -25,10 +48,71 @@ jobs:
           pip install -r requirements.txt
 
       - name: Check Python syntax
-        run: python -m compileall -q etl
+        run: python -m compileall -q etl tests
 
       - name: Run unit tests
         run: python -m unittest discover -s tests -p "test_*.py" -v
+
+      - name: Generate synthetic CI dataset
+        run: python tests/create_ci_fixtures.py
+
+      - name: Run complete ETL pipeline
+        run: python etl/pipeline.py
+
+      - name: Assert integration results
+        run: |
+          python - <<'PY'
+          import os
+          from sqlalchemy import create_engine, text
+
+          url = (
+              f"postgresql://{os.environ['DB_USER']}:"
+              f"{os.environ['DB_PASSWORD']}@"
+              f"{os.environ['DB_HOST']}:{os.environ['DB_PORT']}/"
+              f"{os.environ['DB_NAME']}"
+          )
+          engine = create_engine(url)
+
+          expected = {
+              "fact_sales": 2,
+              "fact_order_items": 2,
+              "dim_customers": 2,
+              "dim_products": 2,
+              "dim_sellers": 2,
+          }
+
+          with engine.connect() as conn:
+              for table, count in expected.items():
+                  actual = conn.execute(
+                      text(f"SELECT COUNT(*) FROM {table}")
+                  ).scalar_one()
+                  print(f"{table}: {actual}")
+                  assert actual == count, (
+                      f"{table}: expected {count}, got {actual}"
+                  )
+
+              revenue = conn.execute(
+                  text("SELECT SUM(total_item_price) FROM fact_sales")
+              ).scalar_one()
+              assert float(revenue) == 300.0, (
+                  f"Unexpected item revenue: {revenue}"
+              )
+
+              item_count = conn.execute(
+                  text("""
+                      SELECT COUNT(*)
+                      FROM fact_order_items
+                      WHERE customer_sk IS NULL
+                         OR product_sk IS NULL
+                         OR seller_sk IS NULL
+                         OR purchase_date_sk IS NULL
+                  """)
+              ).scalar_one()
+              assert item_count == 0, "Missing surrogate keys detected"
+
+          engine.dispose()
+          print("ETL INTEGRATION TESTS PASSED")
+          PY
 
       - name: Build ETL Docker image
         run: docker build -f etl/Dockerfile -t retailiq-etl:ci .
